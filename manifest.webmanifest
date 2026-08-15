@@ -1,0 +1,16 @@
+{
+  "name": "Bear Ball",
+  "short_name": "Bear Ball",
+  "description": "Glowmonkey's Bear Ball (2009), rebuilt to run without Flash.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#0d1117",
+  "theme_color": "#0099ff",
+  "icons": [
+    { "src": "assets/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "assets/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

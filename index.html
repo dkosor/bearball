@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+<title>Bear Ball</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="assets/icon-180.png">
+<meta name="theme-color" content="#0099ff">
+<!-- iOS reads its own tags, not the manifest, for standalone launch. -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Bear Ball">
+<style>
+  @font-face { font-family: "BB Hobo";        src: url("assets/fonts/10_Hobo%20Std.ttf") format("truetype"); font-display: block; }
+  @font-face { font-family: "BB Arial Black"; src: url("assets/fonts/8_Arial%20Black.ttf") format("truetype"); font-display: block; }
+
+  /* Three type sizes for the whole shell, ~1.28 apart. The score is the only
+     number worth reading at a glance, so it gets the top step on its own. */
+  :root { color-scheme: dark; --edge: #26303d;
+          --t-micro: 11px; --t-base: 14px; --t-score: 18px; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { min-height: 100%; background: #0d1117; color: #e6eaf1;
+    font: var(--t-base)/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased; }
+  body { display: flex; flex-direction: column; align-items: center;
+         justify-content: center; min-height: 100vh; padding: 24px 16px 32px; gap: 14px; }
+
+  .frame { position: relative; width: min(94vw, 880px); aspect-ratio: 550 / 400;
+           border: 1px solid var(--edge); border-radius: 12px; overflow: hidden;
+           background: #0099ff; box-shadow: 0 18px 50px -22px #000; }
+  canvas { display: block; width: 100%; height: 100%; }
+
+  #loading { position: absolute; inset: 0; display: grid; place-content: center;
+             gap: 10px; justify-items: center; background: #0d1117; color: #8b95a7;
+             font-size: var(--t-micro); letter-spacing: .04em; }
+  #bar { width: 190px; height: 3px; background: #1d2632; border-radius: 2px; overflow: hidden; }
+  #bar i { display: block; height: 100%; width: 100%; background: #4c8dff;
+           transform: scaleX(0); transform-origin: left; transition: transform .12s linear; }
+
+  /* Everything below the stage is this build's own furniture, not the game's. */
+  .rail { width: min(94vw, 880px); display: flex; align-items: center; gap: 18px;
+          flex-wrap: wrap; justify-content: space-between; }
+
+  button { font: inherit; font-weight: 600; color: #e6eaf1;
+           background: #1a2331; border: 1px solid #2c3849; border-radius: 8px;
+           padding: 8px 13px; cursor: pointer; display: inline-flex; align-items: center;
+           gap: 8px; transition: background .12s ease, border-color .12s ease; }
+  button:hover { background: #223047; border-color: #3a4a61; }
+  button:active { background: #1a2331; }
+  kbd { font: inherit; font-size: var(--t-micro); background: #0f151d; border: 1px solid #2c3849;
+        border-radius: 4px; padding: 1px 5px; color: #93a0b3; }
+
+  .scores { display: flex; align-items: baseline; gap: 12px; margin-left: auto; }
+  .scores .lbl { color: #6b7484; font-size: var(--t-micro); letter-spacing: .06em;
+                 text-transform: uppercase; }
+  .scores .best { color: #ffd35c; font-weight: 650; font-size: var(--t-score);
+                  font-variant-numeric: tabular-nums; }
+  ol#scorelist { display: flex; gap: 7px; list-style: none; padding: 0; margin: 0; }
+  ol#scorelist li { font-variant-numeric: tabular-nums; color: #8b95a7;
+                    background: #151c26; border: 1px solid #232d3b; border-radius: 5px;
+                    padding: 2px 7px; }
+  ol#scorelist li:first-child { color: #cdd5e1; }
+  ol#scorelist li.fresh { border-color: #4c8dff; color: #cddffd; }
+  ol#scorelist li.empty { color: #5b6472; background: none; border-style: dashed; }
+
+  footer { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+           justify-content: center; color: #6b7484; max-width: 760px;
+           text-align: center; }
+  footer b { color: #aeb7c6; font-weight: 600; }
+  #runnote { color: #8b95a7; min-height: 1em; }
+
+  /* Offline state, so it is obvious whether the phone actually holds a copy. */
+  #offline { font-size: var(--t-micro); letter-spacing: .04em; color: #6b7484; }
+  #offline.ready { color: #5bd18b; }
+  #offline.blocked { color: #d1a15b; }
+
+  /* ---- phone and installed-app shell ------------------------------------ */
+  /* On a handset the desktop furniture is dead weight: the stage is a fixed
+     550x400 and the only useful thing to do is letterbox it into whatever the
+     viewport really is, minus the notch. dvh rather than vh — Safari's toolbars
+     resize the viewport, and vh keeps reporting the tall version, which shoves
+     the bottom of the stage under the home indicator. */
+  #hud { display: none; position: absolute; top: 0; left: 0; z-index: 6;
+         align-items: center; gap: 9px; padding: calc(6px + env(safe-area-inset-top)) 10px 6px; }
+  #hud button { padding: 3px 9px; font-size: var(--t-micro); font-weight: 600;
+                background: rgba(13, 17, 23, .55); border-color: rgba(70, 86, 108, .5);
+                backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+  #hudbest { font-size: var(--t-micro); color: #ffd35c; opacity: .8;
+             font-variant-numeric: tabular-nums; text-shadow: 0 1px 3px #0008; }
+
+  #rotate { display: none; position: fixed; inset: 0; z-index: 20;
+            place-content: center; justify-items: center; gap: 12px; padding: 32px;
+            background: #0d1117; color: #8b95a7; text-align: center; }
+  #rotate svg { width: 46px; height: 46px; stroke: #4c8dff; fill: none; stroke-width: 1.6; }
+
+  @media (max-width: 900px), (display-mode: standalone) {
+    html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
+    body { position: fixed; inset: 0; padding: 0; gap: 0; touch-action: none;
+           user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+           --availw: calc(100vw - env(safe-area-inset-left) - env(safe-area-inset-right));
+           --availh: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
+    .frame { aspect-ratio: auto; border: 0; border-radius: 0; box-shadow: none;
+             width:  min(var(--availw), calc(var(--availh) * 550 / 400));
+             height: min(var(--availh), calc(var(--availw) * 400 / 550)); }
+    canvas { touch-action: none; }
+    .rail, footer { display: none; }
+    #hud { display: flex; }
+  }
+
+  /* 550x400 is 1.375 wide. In portrait that letterboxes down to a postage
+     stamp, so ask for the rotation instead of shipping something unplayable. */
+  @media (max-width: 900px) and (orientation: portrait) {
+    #rotate { display: grid; }
+  }
+</style>
+</head>
+<body>
+
+<div class="frame">
+  <canvas id="stage" width="550" height="400"></canvas>
+  <div id="loading"><div>LOADING</div><div id="bar"><i></i></div></div>
+  <div id="hud">
+    <button id="hudrestart" aria-label="Restart run">↻</button>
+    <span id="hudbest">—</span>
+  </div>
+</div>
+
+<div id="rotate">
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <rect x="3" y="7" width="18" height="10" rx="2"/>
+    <path d="M8 3.5 10.5 6 8 8.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>
+  <div>Turn the phone sideways.</div>
+</div>
+
+<div class="rail">
+  <button id="restart">Restart run <kbd>R</kbd></button>
+  <span id="runnote"></span>
+  <div class="scores">
+    <span class="lbl">Best</span>
+    <span class="best" id="bestvalue">—</span>
+    <ol id="scorelist"></ol>
+  </div>
+</div>
+
+<footer>
+  <span><b>Bear Ball</b> — press the catapult button to fire, the slider sets high vs. long.</span>
+  <span>Grab the star for a boost, then press it in the corner to spend it.</span>
+  <span id="offline">checking offline copy…</span>
+</footer>
+
+<script src="swf.js"></script>
+<script src="bearball.js"></script>
+<script src="extras.js"></script>
+<script>
+(async function () {
+  const canvas = document.getElementById('stage');
+  const bar = document.querySelector('#bar i');
+  const loading = document.getElementById('loading');
+
+  const data = await (await fetch('data/game.json')).json();
+  const lib = new SWF.Library(data, '.');
+
+  // Sounds keep their SWF character ids; 198 is the music bed.
+  lib.loadSounds({ 57: '57.mp3', 87: '87.mp3', 123: '123.mp3', 154: '154.mp3',
+                   164: '164.mp3', 169: '169.mp3', 173: '173.mp3', 198: '198.mp3',
+                   219: '219.mp3' });
+  const music = lib.audio[198];
+  if (music) { music.loop = true; music.volume = 0.5; }
+  const basePlay = lib.playSound.bind(lib);
+  lib.playSound = function (id) {
+    if (id === 198) {                      // one looping bed, never restarted
+      if (!lib.muted && music && music.paused) music.play().catch(() => {});
+      return;
+    }
+    basePlay(id);
+  };
+
+  await lib.load((n, total) => { bar.style.transform = `scaleX(${n / total})`; });
+  await (document.fonts ? document.fonts.ready : Promise.resolve());
+
+  loading.remove();
+
+  const stage = new SWF.Stage(canvas, lib);
+
+  // Match the canvas backing store to the pixels actually on screen.
+  // The cap matters on a phone: at devicePixelRatio 3 this asks for a
+  // 1650x1200 backing store, so every one of the 30 frames a second repaints
+  // 2M pixels of vector art. Capping at 2 cuts that by more than half, and at
+  // arm's length on a 6" screen the difference is not visible.
+  const coarse = matchMedia('(pointer: coarse)').matches;
+  const fit = () => {
+    const r = canvas.getBoundingClientRect();
+    if (!r.width) return;
+    const dpr = Math.min(coarse ? 2 : 3, (window.devicePixelRatio || 1) * (r.width / stage.width));
+    if (Math.abs(dpr - stage.dpr) > 0.01) {
+      stage.dpr = dpr;
+      canvas.width = Math.round(stage.width * dpr);
+      canvas.height = Math.round(stage.height * dpr);
+      stage.render();
+    }
+  };
+  new ResizeObserver(fit).observe(canvas);
+
+  // The music toggle in the corner: button 194 is "on", 199 is "off".
+  const inst = lib.instantiate.bind(lib);
+  lib.instantiate = function (id) {
+    const o = inst(id);
+    if (o && (id == 194 || id == 199)) {
+      o.onRelease = function () {
+        const clip = this.parent;
+        if (id == 194) { lib.muted = true;  if (music) music.pause(); clip.gotoAndStop('off'); }
+        else           { lib.muted = false; clip.gotoAndStop('on'); clip.play();
+                         if (music) music.play().catch(() => {}); }
+      };
+    }
+    return o;
+  };
+
+  installExtras(stage);      // must precede installGame: it seeds stage.savedBest
+  installGame(stage);
+  fit();
+  stage.run();
+  window.stage = stage;
+
+  /* ---- phone shell -------------------------------------------------------
+     The compact overlay stands in for the desktop rail. It drives the existing
+     restart button rather than duplicating its logic, and mirrors the best
+     score that extras.js writes into #bestvalue. */
+  const bestValue = document.getElementById('bestvalue');
+  const hudBest = document.getElementById('hudbest');
+  const mirror = () => { hudBest.textContent = bestValue.textContent; };
+  new MutationObserver(mirror).observe(bestValue, { childList: true, characterData: true, subtree: true });
+  mirror();
+  document.getElementById('hudrestart')
+          .addEventListener('click', () => document.getElementById('restart').click());
+
+  /* iOS refuses to start any audio that did not begin inside a real gesture,
+     and the music bed is kicked off from a game tick. Prime each clip silently
+     on the first touch so the later plays are permitted. */
+  const unlock = () => {
+    for (const a of Object.values(lib.audio || {})) {
+      const v = a.volume;
+      a.volume = 0;
+      a.play().then(() => {
+        a.pause();
+        if (a !== music) a.currentTime = 0;
+        a.volume = v;
+      }).catch(() => { a.volume = v; });
+    }
+    window.removeEventListener('touchstart', unlock);
+    window.removeEventListener('mousedown', unlock);
+  };
+  window.addEventListener('touchstart', unlock, { passive: true });
+  window.addEventListener('mousedown', unlock);
+})();
+
+/* ---- offline copy --------------------------------------------------------
+   Service workers only exist in a secure context, so over plain http on a LAN
+   address the API is simply absent. Say which case we are in rather than
+   failing quietly and leaving it a mystery whether the phone holds a copy. */
+(function () {
+  const note = document.getElementById('offline');
+  const set = (cls, text) => { note.className = cls; note.textContent = text; };
+
+  if (!('serviceWorker' in navigator)) {
+    set('blocked', isSecureContext ? 'no service worker support' : 'offline needs https — served over plain http');
+    return;
+  }
+  navigator.serviceWorker.register('sw.js').then(reg => {
+    const done = () => set('ready', 'offline copy ready — add to home screen');
+    if (reg.active && navigator.serviceWorker.controller) return done();
+    set('', 'caching for offline…');
+    const w = reg.installing || reg.waiting;
+    if (w) w.addEventListener('statechange', () => { if (w.state === 'activated') done(); });
+    navigator.serviceWorker.addEventListener('controllerchange', done);
+  }).catch(err => set('blocked', 'offline unavailable: ' + err.message));
+})();
+</script>
+</body>
+</html>
