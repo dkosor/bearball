@@ -67,8 +67,28 @@ abandoned run set a record, the record stands.
   `MochiScores.showLeaderboard`, which called `MochiServices.clip.stop()` on the root.
   Without it the lose screen would flash for a single frame and bounce to the menu.
   There is no leaderboard to show, so the stop is done directly.
-- **Two sound effects were transcoded.** The mud and bowling-pin hits were FLV inside
-  the SWF; they are mp3 here. No browser plays FLV.
-- **Timing is a fixed 30 fps accumulator**, driven by `requestAnimationFrame` when the
-  page is visible and by a timer when it is not — rAF is suspended in a hidden tab and
-  Flash kept playing there.
+- **Two sound effects were transcoded.** The mud and bowling-pin hits (character ids
+  164 and 173) are ADPCM at 5512 Hz in the SWF; they are mp3 here, because no browser
+  decodes SWF ADPCM. The other seven are the original MP3 streams copied straight out,
+  and every duration lands within 0.02 s of the sample count the SWF declares.
+- **Timing is a fixed 30 fps accumulator.** `requestAnimationFrame` drives it, with a
+  timer as a watchdog that only pumps once rAF has gone quiet for more than two frame
+  intervals. Running both unconditionally had them racing over one accumulator at ~90
+  calls a second, which read as stutter; gating the timer on `document.hidden` instead
+  would stall the game outright whenever rAF is throttled while the page still calls
+  itself visible.
+
+## Verified against the SWF
+
+Counted straight out of `bear_ball_game.swf`, not asserted:
+
+| | SWF | here |
+| --- | --- | --- |
+| `DefineShape*` | 148 | 148 |
+| `DefineSound` | 9 (ids 57, 87, 123, 154, 164, 169, 173, 198, 219) | same 9 |
+| `StartSound` | 11 | 11 `snd` triggers in `game.json` |
+| `DefineVideoStream` / `SoundStreamBlock` | 0 / 0 | nothing to carry over |
+
+The one `DefineBitsJPEG2` (id 207, the Glowmonkey logo) and the one `DefineMorphShape`
+(id 90) are placed zero times in any timeline — they belong to the dropped sponsor
+splash. Every character that *is* placed has a shape defined.
