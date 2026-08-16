@@ -439,7 +439,7 @@ class Library {
     this.exports = data.exports;
     this.root = data.root;
     this.rasters = {};
-    this.audio = {};
+    this.buffers = {};      // charId -> decoded AudioBuffer
     this.muted = false;
     this.scripts = {};      // charId | "root"  ->  { frameNumber: fn }
   }
@@ -460,11 +460,50 @@ class Library {
     return null;
   }
 
-  playSound(id) {
-    if (this.muted) return;
-    const a = this.audio[id];
-    if (!a) return;
-    try { const n = a.cloneNode(); n.volume = a.volume; n.play().catch(() => {}); } catch (e) {}
+  /* Sound goes through Web Audio rather than <audio> elements.
+     The old path cloned an element per play so overlapping hits would not cut
+     each other off — but a cloned element refetches its src, so every single
+     effect allocated a media element, went back out through the service worker
+     and span up a fresh decoder. Measured on the deployed build: five plays
+     produced five extra network requests. Decoding each file once up front
+     turns a play into a few microseconds of graph wiring, and overlapping
+     voices still work because every play gets its own BufferSource. */
+  audioContext() {
+    if (this._ac === undefined) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) { this._ac = null; return null; }
+      this._ac = new AC();
+      this._master = this._ac.createGain();
+      this._master.connect(this._ac.destination);
+    }
+    return this._ac;
+  }
+
+  /* Safari will not start a context that was not resumed inside a gesture. */
+  resumeAudio() {
+    const ac = this.audioContext();
+    if (ac && ac.state === 'suspended') ac.resume().catch(() => {});
+  }
+
+  playSound(id, opts) {
+    if (this.muted) return null;
+    const ac = this.audioContext();
+    const buf = this.buffers[id];
+    if (!ac || !buf) return null;
+    this.resumeAudio();
+    const src = ac.createBufferSource();
+    src.buffer = buf;
+    const gain = opts && opts.gain !== undefined ? opts.gain : 1;
+    src.loop = !!(opts && opts.loop);
+    if (gain !== 1) {
+      const g = ac.createGain();
+      g.gain.value = gain;
+      src.connect(g); g.connect(this._master);
+    } else {
+      src.connect(this._master);
+    }
+    src.start();
+    return src;
   }
 
   /* Rasterise every SVG at 2x so scaled-up draws stay crisp. */
@@ -490,12 +529,21 @@ class Library {
     })));
   }
 
-  loadSounds(map) {
-    for (const id in map) {
-      const a = new Audio(`${this.base}/assets/sounds/${map[id]}`);
-      a.preload = 'auto';
-      this.audio[id] = a;
-    }
+  /* Fetch and decode every clip once. Await this before the game starts, so a
+     hit never has to wait on a network round trip mid-run. */
+  async loadSounds(map) {
+    const ac = this.audioContext();
+    if (!ac) return;
+    await Promise.all(Object.keys(map).map(async id => {
+      try {
+        const res = await fetch(`${this.base}/assets/sounds/${map[id]}`);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        this.buffers[id] = await ac.decodeAudioData(await res.arrayBuffer());
+      } catch (err) {
+        console.warn('[sound] %s did not decode:', map[id], err.message);
+        this.buffers[id] = null;
+      }
+    }));
   }
 }
 

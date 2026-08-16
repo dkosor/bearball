@@ -175,22 +175,29 @@
   const lib = new SWF.Library(data, '.');
 
   // Sounds keep their SWF character ids; 198 is the music bed.
-  lib.loadSounds({ 57: '57.mp3', 87: '87.mp3', 123: '123.mp3', 154: '154.mp3',
-                   164: '164.mp3', 169: '169.mp3', 173: '173.mp3', 198: '198.mp3',
-                   219: '219.mp3' });
-  const music = lib.audio[198];
-  if (music) { music.loop = true; music.volume = 0.5; }
+  const soundsReady = lib.loadSounds({
+    57: '57.mp3', 87: '87.mp3', 123: '123.mp3', 154: '154.mp3', 164: '164.mp3',
+    169: '169.mp3', 173: '173.mp3', 198: '198.mp3', 219: '219.mp3' });
+
   const basePlay = lib.playSound.bind(lib);
+  let musicVoice = null;                   // one looping bed, never restarted
+  const startMusic = () => {
+    if (musicVoice || lib.muted) return;
+    musicVoice = basePlay(198, { loop: true, gain: 0.5 });
+  };
+  const stopMusic = () => {
+    if (!musicVoice) return;
+    try { musicVoice.stop(); } catch (e) {}
+    musicVoice = null;
+  };
   lib.playSound = function (id) {
-    if (id === 198) {                      // one looping bed, never restarted
-      if (!lib.muted && music && music.paused) music.play().catch(() => {});
-      return;
-    }
+    if (id === 198) { startMusic(); return; }
     basePlay(id);
   };
 
   await lib.load((n, total) => { bar.style.transform = `scaleX(${n / total})`; });
   await (document.fonts ? document.fonts.ready : Promise.resolve());
+  await soundsReady;   // decoded up front, so no hit stalls on a fetch mid-run
 
   loading.remove();
 
@@ -222,9 +229,9 @@
     if (o && (id == 194 || id == 199)) {
       o.onRelease = function () {
         const clip = this.parent;
-        if (id == 194) { lib.muted = true;  if (music) music.pause(); clip.gotoAndStop('off'); }
+        if (id == 194) { lib.muted = true;  stopMusic(); clip.gotoAndStop('off'); }
         else           { lib.muted = false; clip.gotoAndStop('on'); clip.play();
-                         if (music) music.play().catch(() => {}); }
+                         startMusic(); }
       };
     }
     return o;
@@ -293,19 +300,11 @@
     requestAnimationFrame(sample);
   }
 
-  /* iOS refuses to start any audio that did not begin inside a real gesture,
-     and the music bed is kicked off from a game tick. Prime each clip silently
-     on the first touch so the later plays are permitted. */
+  /* iOS starts an AudioContext suspended and will only resume it inside a real
+     gesture, while the music bed is kicked off from a game tick. One resume on
+     the first touch is all Web Audio needs — no priming of individual clips. */
   const unlock = () => {
-    for (const a of Object.values(lib.audio || {})) {
-      const v = a.volume;
-      a.volume = 0;
-      a.play().then(() => {
-        a.pause();
-        if (a !== music) a.currentTime = 0;
-        a.volume = v;
-      }).catch(() => { a.volume = v; });
-    }
+    lib.resumeAudio();
     window.removeEventListener('touchstart', unlock);
     window.removeEventListener('mousedown', unlock);
   };

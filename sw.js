@@ -5,7 +5,7 @@
 
    Bump CACHE when any asset changes — the old cache is dropped on activate. */
 
-const CACHE = 'bearball-v3';
+const CACHE = 'bearball-v4';
 
 const ASSETS = [
   './', 'index.html', 'swf.js', 'bearball.js', 'extras.js', 'manifest.webmanifest',
