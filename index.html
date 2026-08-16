@@ -84,11 +84,22 @@
      the bottom of the stage under the home indicator. */
   #hud { display: none; position: absolute; top: 0; left: 0; z-index: 6;
          align-items: center; gap: 9px; padding: calc(6px + env(safe-area-inset-top)) 10px 6px; }
+  /* No backdrop-filter here. It reads nicely on a still page, but the thing
+     behind it is a canvas that repaints 30 times a second, so the compositor
+     has to re-blur that region every single frame. On a phone that is a real
+     cost for a decorative effect. Flat translucency instead. */
   #hud button { padding: 3px 9px; font-size: var(--t-micro); font-weight: 600;
-                background: rgba(13, 17, 23, .55); border-color: rgba(70, 86, 108, .5);
-                backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+                background: rgba(13, 17, 23, .72); border-color: rgba(70, 86, 108, .5); }
   #hudbest { font-size: var(--t-micro); color: #ffd35c; opacity: .8;
              font-variant-numeric: tabular-nums; text-shadow: 0 1px 3px #0008; }
+
+  /* Only built when ?perf=1 is on the URL, so it costs nothing normally. */
+  #perf { position: fixed; right: 0; bottom: 0; z-index: 30; margin: 0;
+          padding: 6px 9px calc(6px + env(safe-area-inset-bottom));
+          background: #0d1117d9; color: #9fb4d0; font: 11px/1.45 ui-monospace, Menlo, monospace;
+          white-space: pre; border-top-left-radius: 8px; pointer-events: none; }
+  #perf b { color: #ffd35c; font-weight: 600; }
+  #perf .bad { color: #ff7b6b; }
 
   #rotate { display: none; position: fixed; inset: 0; z-index: 20;
             place-content: center; justify-items: center; gap: 12px; padding: 32px;
@@ -236,6 +247,51 @@
   mirror();
   document.getElementById('hudrestart')
           .addEventListener('click', () => document.getElementById('restart').click());
+
+  /* ---- ?perf=1 -----------------------------------------------------------
+     Lag on a handset is not something the desktop can reproduce, and "it feels
+     laggy" does not say whether frames are slow or merely uneven. So measure
+     both on the device: how many frames the display actually delivers, whether
+     the logic holds 30 Hz, how long a repaint costs, and — the one that
+     usually matters — the longest gap between two frames in the last second.
+     Smooth-but-slow and fast-but-juddery look identical to the eye and have
+     completely different causes. */
+  if (new URLSearchParams(location.search).has('perf')) {
+    const el = document.createElement('div');
+    el.id = 'perf';
+    document.body.appendChild(el);
+
+    let frames = 0, worst = 0, prev = performance.now(), ticks = 0;
+    let renderTotal = 0, renders = 0, since = performance.now();
+
+    const tick0 = stage.tick.bind(stage);
+    stage.tick = () => { ticks++; tick0(); };
+    const render0 = stage.render.bind(stage);
+    stage.render = () => { const t = performance.now(); render0();
+                           renderTotal += performance.now() - t; renders++; };
+
+    const sample = () => {
+      requestAnimationFrame(sample);
+      const now = performance.now();
+      const gap = now - prev; prev = now;
+      frames++;
+      if (gap > worst) worst = gap;
+      if (now - since < 1000) return;
+
+      const secs = (now - since) / 1000;
+      const disp = Math.round(frames / secs);
+      const logic = Math.round(ticks / secs);
+      const rend = renders ? (renderTotal / renders) : 0;
+      const juddery = worst > 50;
+      el.innerHTML =
+        `display <b>${disp}</b>/s   logic <b>${logic}</b>/s\n` +
+        `render <b>${rend.toFixed(2)}</b> ms   dpr ${stage.dpr.toFixed(2)}\n` +
+        `worst gap <span class="${juddery ? 'bad' : ''}">${worst.toFixed(0)} ms</span>` +
+        `   ${stage.canvas.width}x${stage.canvas.height}`;
+      frames = ticks = renders = 0; renderTotal = worst = 0; since = now;
+    };
+    requestAnimationFrame(sample);
+  }
 
   /* iOS refuses to start any audio that did not begin inside a real gesture,
      and the music bed is kicked off from a game tick. Prime each clip silently
